@@ -4,7 +4,8 @@ import time
 import argparse
 
 # Specify the model ID
-model_id = "meta-llama/Llama-3.1-8B"  # default if no arg was passed
+# model_id = "meta-llama/Llama-3.1-8B"  # default if no arg was passed
+model_id = "meta-llama/Llama-3.2-1B"
 
 
 # Define a function to generate text and print the KV cache
@@ -12,27 +13,42 @@ def generate_with_kv_cache(prompt, model_name, max_new_tokens):
 
     # Load the model and tokenizer
     print("loading")
-    tokenizer = transformers.AutoTokenizer.from_pretrained(
-        model_name, use_auth_token=True
-    )
+    tokenizer = transformers.AutoTokenizer.from_pretrained(model_name)
     model = transformers.AutoModelForCausalLM.from_pretrained(
-        model_name, torch_dtype=torch.bfloat16, device_map="auto", use_auth_token=True
+        model_name, torch_dtype=torch.bfloat16, device_map="auto"
     )
     print("Done loading")
+
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+        model.config.pad_token_id = model.config.eos_token_id
 
     # no training being done
     model.eval()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(device)
     model.to(device)
 
-    input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(device)
+    tokenized_input = tokenizer(
+        prompt,
+        return_tensors="pt",
+        padding=True,
+        truncation=True,
+        return_attention_mask=True,
+    )
+
+    input_ids = tokenized_input.input_ids.to(device)
+    attention_mask = tokenized_input.attention_mask.to(device)
 
     start_time = time.time()
 
     # Run a forward pass and store the past key values (KV cache)
     with torch.no_grad():
-        outputs = model(input_ids, use_cache=True)
-        print(outputs)
+        outputs = model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            use_cache=True,
+        )
         logits = outputs.logits
         kv_cache = outputs.past_key_values
 
@@ -48,7 +64,7 @@ def generate_with_kv_cache(prompt, model_name, max_new_tokens):
     # Generate text based on the prompt
 
     first_token_id = torch.argmax(logits[:, -1, :], dim=-1)
-    print(f"{first_token_id=}")
+    # print(f"{first_token_id=}")
 
     first_token = tokenizer.decode(first_token_id)
     print(f"{first_token=}")
@@ -57,31 +73,35 @@ def generate_with_kv_cache(prompt, model_name, max_new_tokens):
     print(f"TTFT: {ttft:.4f} seconds")
     print(f"First token generated: '{first_token}'")
 
-    input_ids = torch.cat([input_ids, first_token_id.unsqueeze(0)], dim=-1)
+    new_attention_mask = torch.cat(
+        [
+            attention_mask,
+            torch.ones((attention_mask.shape[0], 1), dtype=torch.long, device=device),
+        ],
+        dim=1,
+    )
+
+    new_input_ids = torch.cat([input_ids, first_token_id.unsqueeze(0)], dim=-1)
 
     with torch.no_grad():
         generated_ids = model.generate(
-            input_ids,
+            new_input_ids,
+            attention_mask=new_attention_mask,
             max_new_tokens=max_new_tokens,
+            pad_token_id=tokenizer.pad_token_id,
+            eos_token_id=tokenizer.eos_token_id,
+            use_cache=True,
             past_key_values=kv_cache,  # Pass the cached KV states
         )
+
+    generated_text = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
+    print(f"Generated text: '{generated_text}'")
+    return generated_text
 
 
 if __name__ == "__main__":
 
-    prompt = """Please generate some more tokens of this: Lorem ipsum dolor sit amet, consectetuer adipiscing elit. Aenean commodo ligula eget dolor. Aenean massa. 
-    Cum sociis natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Donec quam felis, ultricies nec, 
-    pellentesque eu, pretium quis, sem. Nulla consequat massa quis enim. Donec pede justo, fringilla vel, aliquet nec, vulputate 
-    eget, arcu. In enim justo, rhoncus ut, imperdiet a, venenatis vitae, justo. Nullam dictum felis eu pede mollis pretium. Integer 
-    tincidunt. Cras dapibus. Vivamus elementum semper nisi. Aenean vulputate eleifend tellus. Aenean leo ligula, porttitor eu, c
-    onsequat vitae, eleifend ac, enim. Aliquam lorem ante, dapibus in, viverra quis, feugiat a, tellus. Phasellus viverra nulla u
-    t metus varius laoreet. Quisque rutrum. Aenean imperdiet. Etiam ultricies nisi vel augue. 
-    Curabitur ullamcorper ultricies nisi. Nam eget dui. Etiam rhoncus. Maecenas tempus, tellus eget condimentum rhoncus, 
-    sem quam semper libero, sit amet adipiscing sem neque sed ipsum. Nam quam nunc, blandit vel, luctus pulvinar, hendrerit 
-    id, lorem. Maecenas nec odio et ante tincidunt tempus. Donec vitae sapien ut libero venenatis faucibus. Nullam quis ante. 
-    Etiam sit amet orci eget eros faucibus tincidunt. Duis leo. Sed fringilla mauris sit amet nibh. Donec sodales sagittis magna. 
-    Sed consequat, leo eget bibendum sodales, augue velit cursus nunc
-    """
+    prompt = "Hello how do I bake a cake?"
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -91,7 +111,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--max_new_tokens",
         type=int,
-        default=10,
+        default=100,
         help="Number of new tokens to generate after the first token",
     )
 
@@ -100,5 +120,3 @@ if __name__ == "__main__":
     response = generate_with_kv_cache(
         prompt, args.model_name, max_new_tokens=args.max_new_tokens
     )
-
-    print(f"Generated Text: \n {response}")
