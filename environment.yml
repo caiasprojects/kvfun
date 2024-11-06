@@ -1,0 +1,6 @@
+name: 229s
+channels:
+  - defaults
+dependencies:
+  - python=3.10.14
+  - pip
