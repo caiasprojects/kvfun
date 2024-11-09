@@ -9,7 +9,7 @@ model_id = "meta-llama/Llama-3.2-1B"
 
 
 # Define a function to generate text and print the KV cache
-def generate_with_kv_cache(messages, model_name, max_new_tokens):
+def generate_with_kv_cache(messages, model_name=model_id, max_new_tokens=2048):
 
     # Load the model and tokenizer
     print("loading")
@@ -101,13 +101,20 @@ def generate_with_kv_cache(messages, model_name, max_new_tokens):
     return generated_text
 
 
-if __name__ == "__main__":
-
-    prompt = "How do you make a cake?"
+def call_with_prompt(prompt, max_new_tokens=2048):
     messages = [
         {"role": "system", "content": "You are a helpful assistant."},
         {"role": "user", "content": prompt},
     ]
+
+    response = generate_with_kv_cache(messages, max_new_tokens=max_new_tokens)
+
+    return response
+
+
+if __name__ == "__main__":
+
+    prompt = "How do you make a cake?"
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -123,6 +130,4 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    response = generate_with_kv_cache(
-        messages, args.model_name, max_new_tokens=args.max_new_tokens
-    )
+    response = call_with_prompt(prompt)

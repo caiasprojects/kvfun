@@ -4,3 +4,4 @@ datasets
 safetensors 
 wandb
 accelerate
+matplotlib
