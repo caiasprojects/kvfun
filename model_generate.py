@@ -9,7 +9,7 @@ model_id = "meta-llama/Llama-3.2-1B"
 
 
 # Define a function to generate text and print the KV cache
-def generate_with_kv_cache(prompt, model_name, max_new_tokens):
+def generate_with_kv_cache(messages, model_name, max_new_tokens):
 
     # Load the model and tokenizer
     print("loading")
@@ -23,13 +23,15 @@ def generate_with_kv_cache(prompt, model_name, max_new_tokens):
         tokenizer.pad_token = tokenizer.eos_token
         model.config.pad_token_id = model.config.eos_token_id
 
+    prompt = tokenizer.apply_chat_template(messages)
+
     # no training being done
     model.eval()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(device)
     model.to(device)
 
-    tokenized_input = tokenizer(
+    tokenized_input = tokenizer.apply_chat_template(
         prompt,
         return_tensors="pt",
         padding=True,
@@ -101,7 +103,11 @@ def generate_with_kv_cache(prompt, model_name, max_new_tokens):
 
 if __name__ == "__main__":
 
-    prompt = "Hello how do I bake a cake?"
+    prompt = "How do you make a cake?"
+    messages = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": prompt},
+    ]
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -118,5 +124,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     response = generate_with_kv_cache(
-        prompt, args.model_name, max_new_tokens=args.max_new_tokens
+        messages, args.model_name, max_new_tokens=args.max_new_tokens
     )
