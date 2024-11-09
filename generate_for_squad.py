@@ -1,7 +1,7 @@
 import json
 import random
 
-from model_generate import call_with_prompt
+from model_generate import Baseline_model
 
 # Open and read the JSON file
 with open("squad/squad_data.json", "r") as file:
@@ -29,12 +29,14 @@ random.seed(42)
 questions = create_squad_questions(data)
 random_questions = random.sample(questions, 400)
 
+baseline_model = Baseline_model()
+
 for question in random_questions:
     id = question["id"]
     prompt = question["prompt"]
     print(prompt)
 
-    response = call_with_prompt(prompt)
+    response = baseline_model.call_with_prompt(prompt)
     print("REPSONSE: \n")
     print(response)
 
