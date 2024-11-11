@@ -69,6 +69,9 @@ def make_qid_to_has_ans(dataset):
 def normalize_answer(s):
     """Lower text and remove punctuation, articles and extra whitespace."""
 
+    def remove_leading_number(text):
+        return re.sub(r"^\d+\.\s*", "", text)
+
     def remove_articles(text):
         regex = re.compile(r"\b(a|an|the)\b", re.UNICODE)
         return re.sub(regex, " ", text)
@@ -83,7 +86,9 @@ def normalize_answer(s):
     def lower(text):
         return text.lower()
 
-    return white_space_fix(remove_articles(remove_punc(lower(s))))
+    return white_space_fix(
+        remove_articles(remove_punc(remove_leading_number(lower(s))))
+    )
 
 
 def get_tokens(s):
@@ -126,7 +131,7 @@ def get_raw_scores(dataset, preds):
                     # For unanswerable questions, only correct answer is empty string
                     gold_answers = [""]
                 if qid not in preds:
-                    print("Missing prediction for %s" % qid)
+                    # print("Missing prediction for %s" % qid)
                     continue
                 a_pred = preds[qid]
                 # Take max over all gold answers
@@ -158,10 +163,21 @@ def make_eval_dict(exact_scores, f1_scores, qid_list=None):
         )
     else:
         total = len(qid_list)
+        print(total)
         return collections.OrderedDict(
             [
-                ("exact", 100.0 * sum(exact_scores[k] for k in qid_list) / total),
-                ("f1", 100.0 * sum(f1_scores[k] for k in qid_list) / total),
+                (
+                    "exact",
+                    100.0
+                    * sum(exact_scores[k] for k in qid_list if k in exact_scores)
+                    / total,
+                ),
+                (
+                    "f1",
+                    100.0
+                    * sum(f1_scores[k] for k in qid_list if k in f1_scores)
+                    / total,
+                ),
                 ("total", total),
             ]
         )

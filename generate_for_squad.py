@@ -1,7 +1,13 @@
 import json
 import random
+import os
+from tqdm import tqdm
 
 from model_generate import Baseline_model
+
+n = 200
+model = "Llama-3.1-8B"
+model_name = f"meta-llama/{model}"
 
 # Open and read the JSON file
 with open("squad/squad_data.json", "r") as file:
@@ -27,17 +33,31 @@ def create_squad_questions(data):
 random.seed(42)
 
 questions = create_squad_questions(data)
-random_questions = random.sample(questions, 400)
 
-baseline_model = Baseline_model()
+# select n questions
+random_questions = random.sample(questions, n)
 
-for question in random_questions:
+baseline_model = Baseline_model(model_name)
+
+answers = {}
+total_ttft = 0
+
+for question in tqdm(random_questions):
     id = question["id"]
     prompt = question["prompt"]
-    print(prompt)
+    # print(prompt)
 
-    response = baseline_model.call_with_prompt(prompt)
-    print("REPSONSE: \n")
-    print(response)
+    response, ttft = baseline_model.call_with_prompt(prompt)
+    response = response.split("\n")[0]
+    # print("response: ", response)
+    total_ttft += ttft
+    answers[id] = response
 
-    break
+print("Average ttft: ", total_ttft / n)
+
+save_dir = "squad/answers/"
+os.makedirs(save_dir, exist_ok=True)
+output_path = os.path.join(save_dir, f"{model}.json")
+
+with open(output_path, "w") as f:
+    json.dump(answers, f)
