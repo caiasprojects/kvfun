@@ -2,6 +2,7 @@ from transformers import AutoModelForCausalLM, DynamicCache, AutoTokenizer
 import torch
 import time
 import argparse
+import torch.utils.benchmark as benchmark
 
 BASE_DEFAULT = "meta-llama/Llama-3.1-8B"
 AUX_DEFAULT = "meta-llama/Llama-3.2-1B"
@@ -40,7 +41,7 @@ class KV_prediction_model:
 
 
 class Baseline_model:
-    def __init__(self, model_name=BASE_DEFAULT):
+    def __init__(self, model_name):
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.model = AutoModelForCausalLM.from_pretrained(
@@ -57,7 +58,7 @@ class Baseline_model:
 
         self.model.eval()
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print(device)
+        # print(device)
         self.model.to(device)
 
         inputs = self.tokenizer(
@@ -70,9 +71,8 @@ class Baseline_model:
         input_ids = inputs.input_ids
         attention_mask = inputs.attention_mask
 
-        start_time = time.time()
         past_key_values = DynamicCache()
-        # Run a forward pass and store the past key values (KV cache)
+        # start_time = time.time()
         with torch.no_grad():
             outputs = self.model(
                 input_ids=input_ids,
@@ -83,7 +83,30 @@ class Baseline_model:
             logits = outputs.logits
             past_key_values = outputs.past_key_values
 
-        ttft = time.time() - start_time
+        stmt = """
+        past_key_values = DynamicCache()
+        with torch.no_grad():
+            outputs = self.model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                use_cache=True,
+                past_key_values=past_key_values,
+            )
+        """
+
+        t = benchmark.Timer(
+            stmt=stmt,
+            globals={
+                "self": self,
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+                "DynamicCache": DynamicCache,
+            },
+        )
+
+        ttft = t.timeit(1)
+        ttft = ttft.mean
+        # print("TTFT ", ttft)
 
         # Display the KV cache for debugging
         # print("KV Cache:")
@@ -91,8 +114,6 @@ class Baseline_model:
         #     print(f"Layer {i+1}:")
         #     print("Keys:", layer_cache[0].shape)
         #     print("Values:", layer_cache[1].shape)
-
-        # print(f"TTFT: {ttft:.4f} seconds")
 
         generated_text = ""
 
@@ -124,6 +145,7 @@ class Baseline_model:
                     dim=-1,
                 )
 
+                # check for eos
                 if next_token.item() == self.tokenizer.eos_token_id:
                     break
 
@@ -137,10 +159,10 @@ class Baseline_model:
                     break
 
         generated_text = generated_text.rstrip()
-        print(f"Generated text: \n{generated_text}'")
+        # print(f"Generated text: \n{generated_text}'")
         return generated_text, ttft
 
-    def call_with_prompt(self, prompt, max_new_tokens=2048):
+    def call_with_prompt(self, prompt, max_new_tokens=100):
         messages = [
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": prompt},
