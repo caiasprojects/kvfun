@@ -49,6 +49,10 @@ class Baseline_model:
 
     def run(self, messages, max_new_tokens=100):
 
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+            self.model.config.pad_token_id = self.model.config.eos_token_id
+
         prompt = format_messages_for_prompt(messages)
 
         self.model.eval()
@@ -59,6 +63,8 @@ class Baseline_model:
         inputs = self.tokenizer(
             prompt,
             return_tensors="pt",
+            padding=True,
+            truncation=True,
         ).to(device)
 
         input_ids = inputs.input_ids
@@ -96,6 +102,8 @@ class Baseline_model:
                     input_ids=input_ids[:, -1:],
                     attention_mask=attention_mask,
                     past_key_values=past_key_values,
+                    pad_token_id=self.tokenizer.pad_token_id,
+                    eos_token_id=self.tokenizer.eos_token_id,
                     use_cache=True,
                 )
                 past_key_values = outputs.past_key_values
@@ -116,11 +124,11 @@ class Baseline_model:
                     dim=-1,
                 )
 
-                new_token = self.tokenizer.decode(next_token, skip_special_tokens=True)
-                generated_text += new_token
-
                 if next_token.item() == self.tokenizer.eos_token_id:
                     break
+
+                new_token = self.tokenizer.decode(next_token, skip_special_tokens=True)
+                generated_text += new_token
 
                 # Check for repeating
                 if "User:" in generated_text:
