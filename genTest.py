@@ -4,11 +4,11 @@ from functools import partial
 import math 
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
-
-
+import copy
 import torchvision
 torchvision.disable_beta_transforms_warning()
-
+import safetensors
+from transformers import StaticCache
 from safetensors.torch import save_file
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -16,26 +16,18 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 tokenizer =  AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1B")
 
-#tokenizer.pad_token = tokenizer.eos_token
-
 device = 'cuda:0'
 
 torch.cuda.set_device(device)
-
 torch.set_default_dtype(torch.bfloat16)
 torch.set_default_device(device) 
 
+aux_model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.2-1B")
 
-aux_model = AutoModelForCausalLM.from_pretrained("checkpoint0")
-
-import safetensors
 tensors = {}
 with safetensors.safe_open("projections.896.safetensors", framework="pt", device=device) as f:
    for key in f.keys():
        tensors[key] = f.get_tensor(key)
-
-
-sample = """The rich get richer and the poor get poorer eh? Or is it the rich think different and play by a different set of rules? Do the rich take responsibility and action? Poor people believe 'Life happens to me.' Rich people are committed to be rich. Poor people WANT to be rich. Rich people think big. Poor people think small. Rich people focus on opportunities. Poor people focus on obstacles. Rich people are willing to promote themselves and their value. Poor people think negatively about selling and promotion. Poor people are closed to new ideas.. Do You think rich or poor?"""
 
 
 sample = """ Alice's Adventures in Wonderland (also known as Alice in Wonderland) is an 1865 English children's novel by Lewis Carroll, a mathematics don at the University of Oxford. It details the story of a girl named Alice who falls through a rabbit hole into a fantasy world of anthropomorphic creatures. It is seen as an example of the literary nonsense genre. The artist John Tenniel provided 42 wood-engraved illustrations for the book.
@@ -85,135 +77,112 @@ Gardner has suggested that the Hatter is a reference to Theophilus Carter, an Ox
 
 The Mock Turtle speaks of a drawling-master, "an old conger eel", who came once a week to teach "Drawling, Stretching, and Fainting in Coils". This is a reference to the art critic John Ruskin, who came once a week to the Liddell house to teach the children to draw, sketch, and paint in oils.[33][34] The Mock Turtle sings "Turtle Soup", which is a parody of a song called "Star of the Evening, Beautiful Star", which the Liddells sang for Carroll."""
 
-input_ids = tokenizer(sample, return_tensors="pt")
+input_ids_aux = tokenizer(sample, return_tensors="pt")
 
-print("input_ids", input_ids)
+len_prompt = input_ids_aux['input_ids'].shape[1]
 
+prompt_cache_aux = StaticCache(config=aux_model.config, batch_size=1, max_cache_len=3000, device="cuda:0", dtype=torch.bfloat16)
 
-len_prompt = input_ids['input_ids'].shape[1]
-print("len prompt", len_prompt )
+### Deprecated
+# aux_ks = {}
+# aux_vs = {}
+# aux_qs = {}
+# base_ks = {}
+# base_vs = {}
+# base_qs = {}
+### Deprecated
 
-from transformers import StaticCache
-
-
-prompt_cache = StaticCache(config=aux_model.config, batch_size=1, max_cache_len=3000, device="cuda:0", dtype=torch.bfloat16)
-
-aux_ks = {}
-aux_vs = {}
-aux_qs = {}
-
+#Constants
 aux_xs = {}
+n_layers_base = 32
+n_layers_aux = 16
+aux_dim = 2048
+base_dim = 4096
+aux_kv_dim = 512
+base_kv_dim = 1024
+cache_len = 3000
+kvheads = 8
+head_dim_base = 128
 
-base_ks = {}
-base_vs = {}
-base_qs = {}
 
-
-def kv_hook(module, in_x, output, index, kvs):
-   #print(index, "out", output.shape)
-   # this is attached to v_proj or k_proj
-   
+### Deprecated
+def kv_hook(module, in_x, output, index, kvs):  
    if  kvs.get(index) == None:
       kvs[index] = output
+### Deprecated
 
 
 def x_hook(module, in_x, output, index, xs):
    if  xs.get(index) == None:
       xs[index] = in_x[0]
 
-
-      
-for i in range(16):
-   aux_model.model.layers[i].self_attn.v_proj.register_forward_hook(partial(kv_hook, index = i, kvs = aux_vs))
-   aux_model.model.layers[i].self_attn.k_proj.register_forward_hook(partial(kv_hook, index = i, kvs = aux_ks))
-   aux_model.model.layers[i].self_attn.q_proj.register_forward_hook(partial(kv_hook, index = i, kvs = aux_qs))
-
+for i in range(n_layers_aux):
    aux_model.model.layers[i].self_attn.q_proj.register_forward_hook(partial(x_hook, index = i, xs = aux_xs))
 
 
+#### Fill prompt_cache_aux by calling small model 
 with torch.no_grad():
-     prompt_cache = aux_model(**input_ids,
+     prompt_cache_aux = aux_model(**input_ids_aux,
                               pad_token_id=tokenizer.eos_token_id,
                               max_new_tokens=1, temperature=0.5, do_sample=True,  top_k=50,
-                              past_key_values = prompt_cache).past_key_values
+                              past_key_values = prompt_cache_aux).past_key_values
 
-print("prompt_cache", len( prompt_cache.key_cache),  prompt_cache.key_cache[0].shape) #,  "\n",  prompt_cache.value_cache[0])
-
+print("prompt_cache_aux", len( prompt_cache_aux.key_cache),  prompt_cache_aux.key_cache[0].shape) 
 prompt = " ["
-
-import copy
-
-new_inputs = tokenizer(sample + prompt, return_tensors="pt").to("cuda")
-past_key_values = copy.deepcopy(prompt_cache)
-outputs = aux_model.generate(**new_inputs, past_key_values=past_key_values,max_new_tokens=100,  temperature=0.5, do_sample=True,  top_k=50,
-                         pad_token_id=tokenizer.eos_token_id
-                         )
-response = tokenizer.batch_decode(outputs , skip_special_tokens=True )[0]
-print("output:", response)
+new_inputs_aux = tokenizer(sample + prompt, return_tensors="pt").to("cuda")
+past_key_values_aux = copy.deepcopy(prompt_cache_aux)
+outputs_aux = aux_model.generate(**new_inputs_aux, past_key_values=past_key_values_aux,max_new_tokens=100,  temperature=0.5, do_sample=True,  top_k=50, pad_token_id=tokenizer.eos_token_id)
+response_aux = tokenizer.batch_decode(outputs_aux , skip_special_tokens=True )[0]
+#### end small model generate ??? 
 
 
-# Now.  load the base model
+
+# Now.  load the base model (big)
 base_model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.1-8B")
 
-# Generate the KV cache for the base model from
-# the kv_cache of the small and the projections
-
-for i in range(32):
-   base_model.model.layers[i].self_attn.v_proj.register_forward_hook(partial(kv_hook, index = i, kvs = base_vs))
-   base_model.model.layers[i].self_attn.k_proj.register_forward_hook(partial(kv_hook, index = i, kvs = base_ks))
-   base_model.model.layers[i].self_attn.q_proj.register_forward_hook(partial(kv_hook, index = i, kvs = base_qs))
-   
-
-
 base_prompt_cache = StaticCache(config=base_model.config, batch_size=1, max_cache_len=3000, device="cuda:0", dtype=torch.bfloat16)
-base_prompt_cache1 = StaticCache(config=base_model.config, batch_size=1, max_cache_len=3000, device="cuda:0", dtype=torch.bfloat16)
+#real one
+base_prompt_cache_real = StaticCache(config=base_model.config, batch_size=1, max_cache_len=3000, device="cuda:0", dtype=torch.bfloat16)
 
 with torch.no_grad():
-   base_prompt_cache1 = base_model(**input_ids,
+   base_prompt_cache_real = base_model(**input_ids_aux,
                              pad_token_id=tokenizer.eos_token_id,
                              max_new_tokens=1, temperature=0.5, do_sample=True,  top_k=50,
-                             past_key_values = base_prompt_cache1).past_key_values
+                             past_key_values = base_prompt_cache_real).past_key_values
    
-n_layers_base = 32
-n_layers_aux = 16
-aux_dim = 2048
-base_dim = 4096
-
-aux_kv_dim = 512
-base_kv_dim = 1024
-
-cache_len = 3000
 
 for i in range(n_layers_base):
-   #for j in range(len_prompt):
-   # The key cache is of the shape
-   #[1, 8, cache_len, 64])
+   if i == 0:
+      print("shapes baseL")
+      print("aux_xs[i//2].shape", aux_xs[i//2].shape)
+      print("tensors['Lk.' +str(i)].shape", tensors["Lk." +str(i)].shape)
 
    v_len = aux_xs[i//2].shape[1]
    
-   key_state = (aux_xs[i//2] @ tensors["Lk." +str(i)]).view(1,v_len,8,128 ).transpose(1,2)
-   value_state = (aux_xs[i//2] @ tensors["Lv." +str(i)]).view(1, v_len,8,128).transpose(1,2)
+   key_state = (aux_xs[i//2] @ tensors["Lk." +str(i)]).view(1,v_len,kvheads,head_dim_base ).transpose(1,2)
+   value_state = (aux_xs[i//2] @ tensors["Lv." +str(i)]).view(1, v_len,kvheads,head_dim_base).transpose(1,2)
    
    base_prompt_cache.key_cache[i][:,:,:v_len,:] = key_state
    base_prompt_cache.value_cache[i][:,:,:v_len,:] = value_state
 
-   if True: #lol
-      copy_start = 2510
-      base_prompt_cache.key_cache[i][:,:,copy_start:,:] = base_prompt_cache1.key_cache[i][:,:,copy_start:,:]
-      base_prompt_cache.value_cache[i][:,:,copy_start:,:] = base_prompt_cache1.value_cache[i][:,:,copy_start:,:]
-      
-      
-      copy_start = 200
-      base_prompt_cache.key_cache[i][:,:,:copy_start,:] = base_prompt_cache1.key_cache[i][:,:,:copy_start,:]
-      base_prompt_cache.value_cache[i][:,:,:copy_start,:] = base_prompt_cache1.value_cache[i][:,:,:copy_start,:]
-      
-      
+   #copy random stuff 
+   copy_last = 2510
+   base_prompt_cache.key_cache[i][:,:,copy_last:,:] = base_prompt_cache_real.key_cache[i][:,:,copy_last:,:]
+   base_prompt_cache.value_cache[i][:,:,copy_last:,:] = base_prompt_cache_real.value_cache[i][:,:,copy_last:,:]
+   
+   
+   copy_start = 100
+   base_prompt_cache.key_cache[i][:,:,:copy_start,:] = base_prompt_cache_real.key_cache[i][:,:,:copy_start,:]
+   base_prompt_cache.value_cache[i][:,:,:copy_start,:] = base_prompt_cache_real.value_cache[i][:,:,:copy_start,:]
+   
+
+
 new_inputs = tokenizer(sample + prompt, return_tensors="pt").to("cuda")
 past_key_values = copy.deepcopy(base_prompt_cache)
 outputs = base_model.generate(**new_inputs, past_key_values=past_key_values,max_new_tokens=150,  temperature=0.5, do_sample=True,  top_k=50,
 	                 pad_token_id=tokenizer.eos_token_id
                          )
 response = tokenizer.batch_decode(outputs , skip_special_tokens=True )[0]
-print("output:", response)
+print("output big model :", response)
 
 
