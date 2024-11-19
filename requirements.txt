@@ -5,3 +5,5 @@ safetensors
 wandb
 accelerate
 matplotlib
+huggingface_hub
+safetensors
