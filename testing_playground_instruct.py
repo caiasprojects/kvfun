@@ -198,14 +198,14 @@ for i in range(n_layers_base):
     #     base_prompt_cache_real.value_cache[i][:, :, copy_last:, :]
     # )
 
-    copy_first = 5
+    # copy_first = 5
 
-    base_prompt_cache.key_cache[i][:, :, :copy_first, :] = (
-        base_prompt_cache_real.key_cache[i][:, :, :copy_first, :]
-    )
-    base_prompt_cache.value_cache[i][:, :, :copy_first, :] = (
-        base_prompt_cache_real.value_cache[i][:, :, :copy_first, :]
-    )
+    # base_prompt_cache.key_cache[i][:, :, :copy_first, :] = (
+    #     base_prompt_cache_real.key_cache[i][:, :, :copy_first, :]
+    # )
+    # base_prompt_cache.value_cache[i][:, :, :copy_first, :] = (
+    #     base_prompt_cache_real.value_cache[i][:, :, :copy_first, :]
+    # )
 
     # copy_start = 40
     # copy_end = 44
@@ -217,13 +217,13 @@ for i in range(n_layers_base):
     #     base_prompt_cache_real.value_cache[i][:, :, copy_start:copy_end, :]
     # )
 
-    copy_last = 3
-    base_prompt_cache.key_cache[i][:, :, -copy_last:, :] = (
-        base_prompt_cache_real.key_cache[i][:, :, -copy_last:, :]
-    )
-    base_prompt_cache.value_cache[i][:, :, -copy_last:, :] = (
-        base_prompt_cache_real.value_cache[i][:, :, -copy_last:, :]
-    )
+    # copy_last = 3
+    # base_prompt_cache.key_cache[i][:, :, -copy_last:, :] = (
+    #     base_prompt_cache_real.key_cache[i][:, :, -copy_last:, :]
+    # )
+    # base_prompt_cache.value_cache[i][:, :, -copy_last:, :] = (
+    #     base_prompt_cache_real.value_cache[i][:, :, -copy_last:, :]
+    # )
 
 
 og_input_ids = input_ids
@@ -312,3 +312,193 @@ def plot_kv_differences(
 
 # Call the function with a save path
 plot_kv_differences(base_prompt_cache, base_prompt_cache_real)
+
+
+# TODO: Right now, earlier tokens will have higher importance scores. since
+# they appear more. We need to normalize for this. But if we do it by position,
+# then the later tokens will have higher scores. Etc. Actually a hard problem lol
+def calculate_token_importance(attention_matrices, percent_recalculate):
+    # attention_matrices is a tuple of tensors, one per layer
+    # Each tensor has shape [batch_size, num_heads, seq_len, seq_len]
+
+    # Stack all layers' attention matrices
+
+    print("attention_matrices", len(attention_matrices))
+    print("attention_matrices[0].shape", attention_matrices[0].shape)
+
+    stacked_attention = torch.stack(
+        attention_matrices
+    )  # [num_layers, batch_size, num_heads, seq_len, seq_len]
+
+    # Average across layers, batch, and heads
+    avg_attention = stacked_attention.mean(dim=(0, 1, 2))  # [seq_len, seq_len]
+    print("avg_attention.shape", avg_attention.shape)
+
+    token_importance = avg_attention.sum(dim=0)
+    print("token_importance.shape", token_importance.shape)
+    print("token_importance", token_importance)
+
+    k = int(percent_recalculate * len_prompt)
+    print("k", k)
+    top_k_values, top_k_indices = torch.topk(token_importance, k=k)
+
+    # always add last five tokens if not already in list
+    last_five_tokens = torch.tensor(
+        [len_prompt - 1, len_prompt - 2, len_prompt - 3, len_prompt - 4, len_prompt - 5]
+    )
+
+    for token in last_five_tokens:
+        if token not in top_k_indices:
+            top_k_indices = torch.cat([top_k_indices, token.unsqueeze(0)])
+
+    sorted_top_k_indices = torch.sort(top_k_indices)[0]
+    print("sorted_top_k_indices", sorted_top_k_indices)
+
+    return sorted_top_k_indices
+
+
+# TODO:
+# Here are my notes for me. Very imporant okay.
+
+# curreently my impleentation is slower. Too many forward passes.
+# as well, the mechanism for recomputation is not correct.
+# it does it layer by layer, but it should be doing it token by token.
+# you should see black lines in the kv plots.
+# Lets say you have a list of 10 tokens you want to recompute.
+# There are two ways to do this. You do a forward pass with these 10 tokens.
+# and then fit the kv cache of these 10 tokens back into the hybrid cache.
+# I dont think this is a good approach. It'll work functionally, but it can be
+# wrong.
+# another way is to do the forward pass up to the first token with the aux model.
+# then do one more token (auto regressively, so using the cahce you jsut built) for the next token.
+# then again aux model to the next token.
+
+# the other way is a full restructing of the model. Maybe look at the homework implementation of kv cache.
+# basically you would be told to compute the cahce of the prompt, but you already have a predicted one.
+# you would check if you have to do
+
+# This also works. But is random
+# def calculate_attention_scores():
+#     # Create random importance scores for each token in the sequence
+#     sequence_length = len_prompt  # Using the global len_prompt variable
+#     token_importance = torch.rand(sequence_length, device=device)
+#     return token_importance
+
+
+# so this attention is wrong because it does key matmul with key.
+# it works, but it's not the right way to do it.
+# def calculate_attention_scores(cache, layer_idx, seq_len):
+#     """Calculate attention scores for the sequence"""
+#     # Get key and value states for the layer
+#     key_states = cache.key_cache[layer_idx]  # [1, num_heads, seq_len, head_dim]
+#     value_states = cache.value_cache[layer_idx]
+
+#     # Calculate attention scores
+#     attention_scores = torch.matmul(key_states, key_states.transpose(-1, -2))
+#     attention_scores = attention_scores / math.sqrt(head_dim_base)
+#     attention_scores = torch.nn.functional.softmax(attention_scores, dim=-1)
+
+#     # Average across heads
+#     importance_scores = attention_scores.mean(dim=1).squeeze(0)  # [seq_len, seq_len]
+
+#     # Get maximum attention received by each token
+#     token_importance = importance_scores.max(dim=0)[0]  # [seq_len]
+#     return token_importance
+
+
+def create_hybrid_cache(aux_model, base_model, input_ids, percent_recalculate=0.5):
+    # Get auxiliary model cache first
+    aux_cache = DynamicCache()
+    with torch.no_grad():
+        aux_outputs = aux_model(
+            input_ids,
+            use_cache=True,
+            past_key_values=aux_cache,
+            output_attentions=True,
+        )
+        aux_cache = aux_outputs.past_key_values
+        attention_scores = aux_outputs.attentions
+
+    # Calculate importance scores using attention patterns
+    important_positions = calculate_token_importance(
+        attention_scores, percent_recalculate
+    )
+
+    print(f"Number of important tokens: {len(important_positions)}")
+
+    # Initialize hybrid cache with projected aux states
+    hybrid_cache = DynamicCache()
+    for layer_idx in range(n_layers_base):
+        v_len = aux_xs[layer_idx // 2].shape[1]
+        key_state = (
+            (aux_xs[layer_idx // 2] @ tensors[f"Lk.{layer_idx}"].to(torch.bfloat16))
+            .view(1, v_len, kvheads, head_dim_base)
+            .transpose(1, 2)
+        )
+        value_state = (
+            (aux_xs[layer_idx // 2] @ tensors[f"Lv.{layer_idx}"].to(torch.bfloat16))
+            .view(1, v_len, kvheads, head_dim_base)
+            .transpose(1, 2)
+        )
+        hybrid_cache.update(
+            key_states=key_state, value_states=value_state, layer_idx=layer_idx
+        )
+
+    # Process important tokens one by one
+    current_cache = hybrid_cache
+    print("important_positions", important_positions)
+
+    for pos in important_positions:
+        print("pos", pos)
+        # Create input for single token
+        token_input = input_ids[:, : pos + 1]  # Include all tokens up to this position
+        print("token_input.shape", token_input.shape)
+
+        # Forward pass with current cache
+        with torch.no_grad():
+            outputs = base_model(
+                token_input[:, -1:],  # Only process the last token
+                use_cache=True,
+                past_key_values=current_cache,
+            )
+
+            # Update cache with the new KV values for this token
+            new_cache = outputs.past_key_values
+
+            for layer_idx in range(n_layers_base):
+                # print(
+                #     "new_cache.key_cache[layer_idx].shape",
+                #     new_cache.key_cache[layer_idx].shape,
+                # )
+
+                new_key = new_cache.key_cache[layer_idx][
+                    :, :, -1:, :
+                ]  # Take only the last position
+
+                # print("new_key.shape", new_key.shape)
+                new_value = new_cache.value_cache[layer_idx][:, :, -1:, :]
+
+                hybrid_cache.key_cache[layer_idx][:, :, pos : pos + 1, :] = new_key
+                hybrid_cache.value_cache[layer_idx][:, :, pos : pos + 1, :] = new_value
+
+                new_cache.update(
+                    key_states=key_state, value_states=value_state, layer_idx=i
+                )
+
+            current_cache = hybrid_cache
+
+    return hybrid_cache
+
+
+final_cache = create_hybrid_cache(aux_model, base_model, input_ids)
+
+generated_text, final_cache = generate_text(
+    base_model, input_ids, final_cache, tokenizer
+)
+print("output hybrid model :", generated_text)
+
+plot_kv_differences(
+    base_prompt_cache_real,
+    final_cache,
+    save_path="kv_differences/hybrid_kv_differences.png",
+)
