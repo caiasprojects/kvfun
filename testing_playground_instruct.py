@@ -466,24 +466,15 @@ def create_hybrid_cache(aux_model, base_model, input_ids, percent_recalculate=0.
             new_cache = outputs.past_key_values
 
             for layer_idx in range(n_layers_base):
-                # print(
-                #     "new_cache.key_cache[layer_idx].shape",
-                #     new_cache.key_cache[layer_idx].shape,
-                # )
 
                 new_key = new_cache.key_cache[layer_idx][
                     :, :, -1:, :
                 ]  # Take only the last position
 
-                # print("new_key.shape", new_key.shape)
                 new_value = new_cache.value_cache[layer_idx][:, :, -1:, :]
 
                 hybrid_cache.key_cache[layer_idx][:, :, pos : pos + 1, :] = new_key
                 hybrid_cache.value_cache[layer_idx][:, :, pos : pos + 1, :] = new_value
-
-                new_cache.update(
-                    key_states=key_state, value_states=value_state, layer_idx=i
-                )
 
             current_cache = hybrid_cache
 
