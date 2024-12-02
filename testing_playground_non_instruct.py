@@ -17,25 +17,24 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file
 
-
-
 device = "cuda:0"
 
 torch.cuda.set_device(device)
 torch.set_default_dtype(torch.bfloat16)
 torch.set_default_device(device)
 
-aux_model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.2-1B-Instruct")
-base_model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.1-8B-Instruct")
+aux_model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.2-1B")
+base_model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.1-8B")
 
-tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1B-Instruct")
+tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1B")
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
     aux_model.config.pad_token_id = aux_model.config.eos_token_id
 
 repo_id = "caiacost/matrix-fun"
-#filename = "projections.safetensors"
-filename = "projections_new_INST.safetensors"
+filename = "projections.safetensors"
+# filename = "projections_new_INST.safetensors"
+# filename = "projections_step_1000-inst11-26.safetensors"
 file_path = hf_hub_download(repo_id=repo_id, filename=filename)
 tensors = load_file(file_path)
 
@@ -87,16 +86,18 @@ tensors = load_file(file_path)
 
 # The Mock Turtle speaks of a drawling-master, "an old conger eel", who came once a week to teach "Drawling, Stretching, and Fainting in Coils". This is a reference to the art critic John Ruskin, who came once a week to the Liddell house to teach the children to draw, sketch, and paint in oils.[33][34] The Mock Turtle sings "Turtle Soup", which is a parody of a song called "Star of the Evening, Beautiful Star", which the Liddells sang for Carroll."""
 
-sample = "My name is John. What is my name?"
+sample = "Human: My name is John. What is my name?\n\nAssistant:"
 messages = [
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": sample},
-        ]
+    {"role": "system", "content": "You are a helpful assistant."},
+    {"role": "user", "content": sample},
+]
 
-input_ids = tokenizer.apply_chat_template(
-    messages, add_generation_prompt=True, tokenize=True, return_tensors="pt", device="cuda:0"
-)
+# input_ids = tokenizer.apply_chat_template(
+#     messages, add_generation_prompt=True, tokenize=True, return_tensors="pt", device="cuda:0"
+# )
 
+input_ids = tokenizer(sample, return_tensors="pt").to("cuda")
+print("input_ids.input_ids.shape", input_ids.input_ids.shape)
 # len_prompt = input_ids_aux["input_ids"].shape[1]
 
 prompt_cache_aux = StaticCache(
@@ -151,7 +152,7 @@ for i in range(n_layers_aux):
 #### Fill prompt_cache_aux by calling small model
 with torch.no_grad():
     prompt_cache_aux = aux_model(
-        input_ids,
+        **input_ids,
         use_cache=True,
         past_key_values=prompt_cache_aux,
     ).past_key_values
@@ -168,11 +169,15 @@ past_key_values_aux = copy.deepcopy(prompt_cache_aux)
 generated_text = ""
 max_new_tokens = 100
 
+attention_mask = input_ids.attention_mask
+input_ids = input_ids.input_ids
+
 with torch.no_grad():
     for _ in range(max_new_tokens):
 
         outputs = aux_model(
             input_ids=input_ids[:, -1:],
+            attention_mask=attention_mask[:, -1:],
             past_key_values=past_key_values_aux,
             pad_token_id=tokenizer.pad_token_id,
             eos_token_id=tokenizer.eos_token_id,
@@ -184,6 +189,9 @@ with torch.no_grad():
         next_token = torch.argmax(next_token_logits, dim=-1)
 
         input_ids = torch.cat([input_ids, next_token.unsqueeze(-1)], dim=-1)
+        attention_mask = torch.cat(
+            [attention_mask, torch.ones_like(next_token.unsqueeze(-1))], dim=-1
+        )
 
         # check for eos
         if next_token.item() == tokenizer.eos_token_id:
@@ -195,7 +203,7 @@ with torch.no_grad():
         generated_text += new_token
 
 generated_text = generated_text.rstrip()
-#response_aux = tokenizer.batch_decode(outputs_aux, skip_special_tokens=True)[0]
+# response_aux = tokenizer.batch_decode(outputs_aux, skip_special_tokens=True)[0]
 print("output small model :", generated_text)
 
 #### end small model generate ???
@@ -218,13 +226,15 @@ base_prompt_cache_real = StaticCache(
     dtype=torch.bfloat16,
 )
 
-input_ids = tokenizer.apply_chat_template(
-    messages, add_generation_prompt=True, tokenize=True, return_tensors="pt", device="cuda:0"
-)
+# input_ids = tokenizer.apply_chat_template(
+#     messages, add_generation_prompt=True, tokenize=True, return_tensors="pt", device="cuda:0"
+# )
+input_ids = tokenizer(sample, return_tensors="pt").to("cuda")
+# Add this line to see the decoded tokens
 
 with torch.no_grad():
     base_prompt_cache_real = base_model(
-        input_ids,
+        **input_ids,
         use_cache=True,
         past_key_values=base_prompt_cache_real,
     ).past_key_values
@@ -260,17 +270,22 @@ for i in range(n_layers_base):
     #     base_prompt_cache_real.value_cache[i][:, :, copy_last:, :]
     # )
 
-    # copy_start = 100
-    # base_prompt_cache.key_cache[i][:, :, :copy_start, :] = (
-    #     base_prompt_cache_real.key_cache[i][:, :, :copy_start, :]
-    # )
-    # base_prompt_cache.value_cache[i][:, :, :copy_start, :] = (
-    #     base_prompt_cache_real.value_cache[i][:, :, :copy_start, :]
-    # )
+    copy_start = 5
+    print(
+        f"First {copy_start} tokens: {tokenizer.batch_decode(input_ids.input_ids[0, :copy_start])}"
+    )
 
+    base_prompt_cache.key_cache[i][:, :, :copy_start, :] = (
+        base_prompt_cache_real.key_cache[i][:, :, :copy_start, :]
+    )
+    base_prompt_cache.value_cache[i][:, :, :copy_start, :] = (
+        base_prompt_cache_real.value_cache[i][:, :, :copy_start, :]
+    )
 
-#new_inputs = tokenizer(sample + prompt, return_tensors="pt").to("cuda")
-past_key_values = copy.deepcopy(base_prompt_cache_real)
+# new_inputs = tokenizer(sample + prompt, return_tensors="pt").to("cuda")
+# past_key_values = copy.deepcopy(base_prompt_cache_real)
+past_key_values = copy.deepcopy(base_prompt_cache)
+
 # outputs = base_model.generate(
 #     input_ids,
 #     past_key_values=past_key_values,
@@ -278,12 +293,16 @@ past_key_values = copy.deepcopy(base_prompt_cache_real)
 #     pad_token_id=tokenizer.eos_token_id
 # )
 
+attention_mask = input_ids.attention_mask
+input_ids = input_ids.input_ids
+
 generated_text = ""
 with torch.no_grad():
     for _ in range(max_new_tokens):
 
         outputs = base_model(
             input_ids=input_ids[:, -1:],
+            attention_mask=attention_mask[:, -1:],
             past_key_values=past_key_values,
             pad_token_id=tokenizer.pad_token_id,
             eos_token_id=tokenizer.eos_token_id,
@@ -295,6 +314,9 @@ with torch.no_grad():
         next_token = torch.argmax(next_token_logits, dim=-1)
 
         input_ids = torch.cat([input_ids, next_token.unsqueeze(-1)], dim=-1)
+        attention_mask = torch.cat(
+            [attention_mask, torch.ones_like(next_token.unsqueeze(-1))], dim=-1
+        )
 
         # check for eos
         if next_token.item() == tokenizer.eos_token_id:
@@ -307,5 +329,5 @@ with torch.no_grad():
 
 generated_text = generated_text.rstrip()
 
-#response = tokenizer.batch_decode(outputs, skip_special_tokens=True)[0]
+# response = tokenizer.batch_decode(outputs, skip_special_tokens=True)[0]
 print("output big model :", generated_text)
