@@ -42,7 +42,7 @@ file_path = hf_hub_download(repo_id=repo_id, filename=filename)
 tensors = load_file(file_path)
 
 # sample prompt
-sample = "My name is John. What is my name?"
+sample = "Respond very briefly: My name is John. What is my name?"
 messages = [
     {"role": "user", "content": sample},
 ]
@@ -198,14 +198,14 @@ for i in range(n_layers_base):
     #     base_prompt_cache_real.value_cache[i][:, :, copy_last:, :]
     # )
 
-    # copy_first = 15
+    copy_first = 5
 
-    # base_prompt_cache.key_cache[i][:, :, :copy_first, :] = (
-    #     base_prompt_cache_real.key_cache[i][:, :, :copy_first, :]
-    # )
-    # base_prompt_cache.value_cache[i][:, :, :copy_first, :] = (
-    #     base_prompt_cache_real.value_cache[i][:, :, :copy_first, :]
-    # )
+    base_prompt_cache.key_cache[i][:, :, :copy_first, :] = (
+        base_prompt_cache_real.key_cache[i][:, :, :copy_first, :]
+    )
+    base_prompt_cache.value_cache[i][:, :, :copy_first, :] = (
+        base_prompt_cache_real.value_cache[i][:, :, :copy_first, :]
+    )
 
     # copy_start = 40
     # copy_end = 44
@@ -217,13 +217,13 @@ for i in range(n_layers_base):
     #     base_prompt_cache_real.value_cache[i][:, :, copy_start:copy_end, :]
     # )
 
-    # copy_last = 50
-    # base_prompt_cache.key_cache[i][:, :, -copy_last:, :] = (
-    #     base_prompt_cache_real.key_cache[i][:, :, -copy_last:, :]
-    # )
-    # base_prompt_cache.value_cache[i][:, :, -copy_last:, :] = (
-    #     base_prompt_cache_real.value_cache[i][:, :, -copy_last:, :]
-    # )
+    copy_last = 3
+    base_prompt_cache.key_cache[i][:, :, -copy_last:, :] = (
+        base_prompt_cache_real.key_cache[i][:, :, -copy_last:, :]
+    )
+    base_prompt_cache.value_cache[i][:, :, -copy_last:, :] = (
+        base_prompt_cache_real.value_cache[i][:, :, -copy_last:, :]
+    )
 
 
 og_input_ids = input_ids
