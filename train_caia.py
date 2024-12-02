@@ -11,7 +11,6 @@ import wandb
 
 
 # --- Constants and Hyperparameters ---
-access_token = "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"
 doc_len = 1024
 batch = 4
 batch_size = 4
