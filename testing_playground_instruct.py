@@ -101,14 +101,14 @@ print(
 
 
 # helper function to generate text autoregressively with a given cache
-def generate_text(model, input_ids, past_key_values, tokenizer, max_new_tokens=100):
+def generate_text(model, input_ids, cache, tokenizer, max_new_tokens=100):
     generated_text = ""
 
     with torch.no_grad():
         for _ in range(max_new_tokens):
             outputs = model(
                 input_ids=input_ids[:, -1:],
-                past_key_values=past_key_values,
+                past_key_values=cache,
                 pad_token_id=tokenizer.pad_token_id,
                 eos_token_id=tokenizer.eos_token_id,
                 use_cache=True,
@@ -228,18 +228,19 @@ for i in range(n_layers_base):
 
 og_input_ids = input_ids
 
-past_key_values = copy.deepcopy(base_prompt_cache)
-generated_text, past_key_values = generate_text(
-    base_model, input_ids, past_key_values, tokenizer
-)
-print("output big model :", generated_text)
-
 
 # See what tokens are per the input
 for i in range(og_input_ids.shape[1]):
     token_id = input_ids[0, i].item()
     decoded = tokenizer.decode(token_id)
     print(f"Token {i}: {token_id} -> {decoded}")
+
+# generate text with predicted cache
+past_key_values = copy.deepcopy(base_prompt_cache)
+generated_text, past_key_values = generate_text(
+    base_model, input_ids, past_key_values, tokenizer
+)
+print("output big model :", generated_text)
 
 
 def plot_kv_differences(
