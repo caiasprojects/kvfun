@@ -19,7 +19,7 @@ def process_response(response):
     """Clean up the model's response."""
     return response.strip()
 
-def generate_responses_and_save(messages, ids, texts, questions, answers, output_files, tokenizer, sampling_params, llm):
+def generate_responses_and_save(messages, ids, texts, questions, answers, output_files, tokenizer, sampling_params, llm, iss):
     """Generate responses using the LLM and save them to output files."""
     # Split messages into batches based on the number of output files
     batch_size = len(messages) // len(output_files)
@@ -37,6 +37,7 @@ def generate_responses_and_save(messages, ids, texts, questions, answers, output
 
             result = {
                 "id": ids[i],
+                "unid" : iss[i],
                 "text": texts[i][:10],
                 "question": questions[i],
                 "generated_answer": processed_response,
@@ -55,10 +56,12 @@ def evaluate_loogle(testset, output_files, tokenizer, sampling_params, llm):
     data = load_dataset("bigainlco/LooGLE", testset, split="test")
 
     ids = []
+    iss = []
     texts = []
     questions = []
     answers = []
     messages = []
+    mj = 0
 
     # Prepare prompts for generating answers
     for i, entry in enumerate(data):
@@ -72,10 +75,11 @@ def evaluate_loogle(testset, output_files, tokenizer, sampling_params, llm):
             print(f"Error parsing qa_pairs for entry {i}")
             continue
 
-        for qa in qa_pairs:
+        for j, qa in enumerate(qa_pairs):
             if not isinstance(qa, dict) or "Q" not in qa or "A" not in qa:
                 print(f"Invalid QA pair format in entry {i}: {qa}")
                 continue
+            
 
             question = qa["Q"]
             ground_truth_answer = qa["A"]
@@ -85,6 +89,8 @@ def evaluate_loogle(testset, output_files, tokenizer, sampling_params, llm):
             texts.append(input_text)
             questions.append(question)
             answers.append(ground_truth_answer)
+            iss.append(mj)
+            mj = mj + 1
 
             # Create the prompt message
             prompt = [
@@ -101,13 +107,15 @@ def evaluate_loogle(testset, output_files, tokenizer, sampling_params, llm):
 
                     Requirements:
                     1. Provide a clear and precise answer.
-                    2. Respond in 1 to 5 words.
+                    2. Respond in a few words, up to 1 sentence
 
                     # ANSWER:
                     """
                 }
             ]
             messages.append(prompt)
+            if len(messages) > 200:
+                break
 
     # Generate and save responses
     generate_responses_and_save(
@@ -119,7 +127,8 @@ def evaluate_loogle(testset, output_files, tokenizer, sampling_params, llm):
         output_files,
         tokenizer,
         sampling_params,
-        llm
+        llm,
+        iss
     )
 
 def main(model_name, max_model_len, outputdir, temperature):
@@ -143,7 +152,7 @@ def main(model_name, max_model_len, outputdir, temperature):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="LooGLE Q&A Evaluation Script")
-    parser.add_argument('--model_name', type=str, default="meta-llama/Llama-3.2-1B-Instruct", help="The name of the model to be used.")
+    parser.add_argument('--model_name', type=str, default="meta-llama/Llama-3.1-8B-Instruct", help="The name of the model to be used.")
     parser.add_argument('--max_model_len', type=int, default=36051, help="Maximum model length.")
     parser.add_argument('--outputdir', type=str, default='loogle_results', help="Output directory to store results.")
     parser.add_argument('--temperature', type=float, default=0.7, help="Sampling temperature.")
