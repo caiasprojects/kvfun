@@ -20,7 +20,7 @@ def create_squad_questions(data):
                 question = qa["question"]
                 id = qa["id"]
 
-                final_question = f"Context: {context}\nQuestion: {question}. Answer in as few words as possible"
+                final_question = f"Answer in as few words as possible. Context: {context}\nQuestion: {question}. Answer in as few words as possible"
                 questions.append({"id": id, "prompt": final_question})
 
     return questions
@@ -32,12 +32,18 @@ questions = create_squad_questions(data)
 
 
 n = 400
-model_str = "Llama1B_baseline_hyprid"
+model_str = "Llama1B_aux_8B_base_recomputed_hyprid"
 
 # select n questions
 random_questions = random.sample(questions, n)
 
-model = KV_hybrid_model(baseline=False)
+recalculate_args = {
+    "recalculate": True,
+    "interval_size": 40,
+    "num_intervals": 2,
+}
+
+model = KV_hybrid_model(baseline_base=False, baseline_aux=False)
 
 
 answers = {}
@@ -48,7 +54,7 @@ for question in tqdm(random_questions):
     prompt = question["prompt"]
 
     response, ttft, cache, prompt_len = model.call_with_prompt(
-        prompt, max_new_tokens=100, recalculate=False
+        prompt, max_new_tokens=100, recalculate_args=recalculate_args
     )
 
     total_ttft += ttft
