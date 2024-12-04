@@ -172,6 +172,7 @@ def select_important_intervals(
     scores = list(token_importance)
     intervals = []
     seq_len = len(scores)
+    interval_size = interval_size // 2
 
     for _ in range(num_intervals):
         # Find the highest remaining score
