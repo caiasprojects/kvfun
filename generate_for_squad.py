@@ -4,17 +4,20 @@ import os
 from tqdm import tqdm
 
 from model_generate import KV_hybrid_model
+from transformers import AutoTokenizer
 
 n = 400
-model_str = "Llama8B_aux_8B_base_hyprid"
+model_str = "1B_aux_8B_base_no_recalc"
 
 recalculate_args = {
     "recalculate": False,
-    "interval_size": 80,
+    "interval_size": 400,
     "num_intervals": 1,
 }
 
-model = KV_hybrid_model(baseline_base=True, baseline_aux=False)
+model = KV_hybrid_model(baseline_base=False, baseline_aux=False)
+
+tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1B-Instruct")
 
 # Open and read the JSON file
 with open("squad/squad_data.json", "r") as file:
@@ -22,29 +25,47 @@ with open("squad/squad_data.json", "r") as file:
 
 
 def create_squad_questions(data):
-
     questions_total = []
+
     for article in data:
+        if len(questions_total) >= n:
+            print("reached n")
+            return questions_total
+
+        # Collect all paragraphs from the article
+        article_paragraphs = []
         for paragraph in article["paragraphs"]:
-            context = paragraph["context"]
+            article_paragraphs.append(paragraph["context"])
+        # print(len(article_paragraphs))
+
+        for i, paragraph in enumerate(article["paragraphs"][:-4]):
+            num_paragraphs = 4  # of paragraphs to add to extend prompt length
+            combined_context = " ".join(article_paragraphs[i : i + num_paragraphs])
+            # print(len(combined_context))
+
             for qa in paragraph["qas"]:
                 if len(questions_total) >= n:
-                    print("reached n")
                     return questions_total
 
                 question = qa["question"]
                 id = qa["id"]
 
-                final_question = f"Answer in as few words as possible. Context: {context}\nQuestion: {question}. Answer in as few words as possible"
-                if len(final_question) > 1500:
+                final_question = f"Answer in as few words as possible. Context: {combined_context}\nQuestion: {question}. Answer in as few words as possible"
+
+                message = [{"role": "user", "content": final_question}]
+
+                tokens = tokenizer.apply_chat_template(
+                    message, tokenize=True, add_generation_prompt=True
+                )
+
+                # make sure its long enough to be useful
+                if 1000 <= len(tokens):
                     questions_total.append({"id": id, "prompt": final_question})
 
     return questions_total
 
 
 questions = create_squad_questions(data)
-print("max prompt length: ", max(len(q["prompt"]) for q in questions))
-print("min prompt length: ", min(len(q["prompt"]) for q in questions))
 
 answers = {}
 total_ttft = 0
@@ -72,3 +93,5 @@ output_path = os.path.join(save_dir, f"{model_str}@{n}.json")
 
 with open(output_path, "w") as f:
     json.dump(answers, f)
+
+print(model_str)

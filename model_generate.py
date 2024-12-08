@@ -99,9 +99,7 @@ class KV_hybrid_model:
 
         len_prompt = input_ids.shape[1]
 
-        stacked_attention = torch.stack(
-            attention_matrices
-        )  # [num_layers, batch_size, num_heads, seq_len, seq_len]
+        stacked_attention = torch.stack(attention_matrices)
 
         # Average across layers, batch, and heads
         avg_attention = stacked_attention.mean(dim=(0, 1, 2))  # [seq_len, seq_len]
@@ -119,7 +117,6 @@ class KV_hybrid_model:
             offset=ten_percent,
         )
 
-        # always add last 15 tokens if not already in list
         full_recalculate = (
             [(0, ten_percent)] + intervals + [(len_prompt - ten_percent, len_prompt)]
         )
@@ -127,8 +124,8 @@ class KV_hybrid_model:
         merged_recompute_intervals = []
         current_start, current_end = full_recalculate[0]
 
+        # Merge intervals if they overlap
         for start, end in full_recalculate[1:]:
-            # If current interval overlaps with next interval
             if start <= current_end + 1:
                 # Extend current interval
                 current_end = max(current_end, end)
@@ -144,7 +141,7 @@ class KV_hybrid_model:
 
         return full_recalculate
 
-    def upproject_cache(self):
+    def up_project_cache(self):
 
         hybrid_cache = DynamicCache()
         for layer_idx in range(n_layers_base):
@@ -205,19 +202,20 @@ class KV_hybrid_model:
         if self.baseline_aux:
             return aux_cache
 
-        hybrid_cache = self.upproject_cache()
+        hybrid_cache = self.up_project_cache()
 
         if not recalculate:
             return hybrid_cache
+
         # Calculate intervals to recompute
         intervals = self.calculate_token_importance(
             input_ids, attention_scores, interval_size, num_intervals
         )
 
-        # Time base model operations for each group
         current_cache = hybrid_cache
         # print("important_positions", important_positions)
         # print("num of intervals", len(intervals))
+
         for interval in intervals:
             start_pos = interval[0]
             end_pos = interval[-1] + 1  # Add 1 to include the last token
@@ -225,6 +223,7 @@ class KV_hybrid_model:
             # Create input for token group
             token_input = input_ids[:, start_pos:end_pos]
 
+            # cache up to start of interval
             truncated_cache = DynamicCache()
             for layer_idx in range(n_layers_base):
                 truncated_cache.update(
@@ -235,7 +234,7 @@ class KV_hybrid_model:
                     layer_idx=layer_idx,
                 )
 
-            # Forward pass with current cache
+            # Forward pass with truncated cache
             with torch.no_grad():
                 outputs = self.base_model(
                     token_input,  # Process only the tokens in the group
@@ -284,6 +283,7 @@ class KV_hybrid_model:
             messages, add_generation_prompt=True, tokenize=True, return_tensors="pt"
         ).to(device)
 
+        # Time to build cache
         stmt = """
                 past_key_values = self.build_cache(input_ids, recalculate_args=recalculate_args)   
             """
@@ -338,19 +338,17 @@ class KV_hybrid_model:
 
 
 if __name__ == "__main__":
-    prompt = "France took control of Algeria in 1830 but began in earnest to rebuild its worldwide empire after 1850, concentrating chiefly in North and West Africa, as well as South-East Asia, with other conquests in Central and East Africa, as well as the South Pacific. Republicans, at first hostile to empire, only became supportive when Germany started to build her own colonial empire. As it developed, the new empire took on roles of trade with France, supplying raw materials and purchasing manufactured items, as well as lending prestige to the motherland and spreading French civilization and language as well as Catholicism. It also provided crucial manpower in both World Wars. Question:  When did French Republicans back building the English empire?. Answer in as few words as possible. France took control of Algeria in 1830 but began in earnest to rebuild its worldwide empire after 1850, concentrating chiefly in North and West Africa, as well as South-East Asia, with other conquests in Central and East Africa, as well as the South Pacific. Republicans, at first hostile to empire, only became supportive when Germany started to build her own colonial empire. As it developed, the new empire took on roles of trade with France, supplying raw materials and purchasing manufactured items, as well as lending prestige to the motherland and spreading French civilization and language as well as Catholicism. It also provided crucial manpower in both World Wars. Question:  When did French Republicans back building the English empire?. Answer in as few words as possible. France took control of Algeria in 1830 but began in earnest to rebuild its worldwide empire after 1850, concentrating chiefly in North and West Africa, as well as South-East Asia, with other conquests in Central and East Africa, as well as the South Pacific. Republicans, at first hostile to empire, only became supportive when Germany started to build her own colonial empire. As it developed, the new empire took on roles of trade with France, supplying raw materials and purchasing manufactured items, as well as lending prestige to the motherland and spreading French civilization and language as well as Catholicism. It also provided crucial manpower in both World Wars. Question:  When did French Republicans back building the English empire?. Answer in as few words as possible. France took control of Algeria in 1830 but began in earnest to rebuild its worldwide empire after 1850, concentrating chiefly in North and West Africa, as well as South-East Asia, with other conquests in Central and East Africa, as well as the South Pacific. Republicans, at first hostile to empire, only became supportive when Germany started to build her own colonial empire. As it developed, the new empire took on roles of trade with France, supplying raw materials and purchasing manufactured items, as well as lending prestige to the motherland and spreading French civilization and language as well as Catholicism. It also provided crucial manpower in both World Wars. Question:  When did French Republicans back building the English empire?. Answer in as few words as possible. France took control of Algeria in 1830 but began in earnest to rebuild its worldwide empire after 1850, concentrating chiefly in North and West Africa, as well as South-East Asia, with other conquests in Central and East Africa, as well as the South Pacific. Republicans, at first hostile to empire, only became supportive when Germany started to build her own colonial empire. As it developed, the new empire took on roles of trade with France, supplying raw materials and purchasing manufactured items, as well as lending prestige to the motherland and spreading French civilization and language as well as Catholicism. It also provided crucial manpower in both World Wars. Question:  When did French Republicans back building the English empire?. Answer in as few words as possible. France took control of Algeria in 1830 but began in earnest to rebuild its worldwide empire after 1850, concentrating chiefly in North and West Africa, as well as South-East Asia, with other conquests in Central and East Africa, as well as the South Pacific. Republicans, at first hostile to empire, only became supportive when Germany started to build her own colonial empire. As it developed, the new empire took on roles of trade with France, supplying raw materials and purchasing manufactured items, as well as lending prestige to the motherland and spreading French civilization and language as well as Catholicism. It also provided crucial manpower in both World Wars. Question:  When did French Republicans back building the English empire?. Answer in as few words as possible.France took control of Algeria in 1830 but began in earnest to rebuild its worldwide empire after 1850, concentrating chiefly in North and West Africa, as well as South-East Asia, with other conquests in Central and East Africa, as well as the South Pacific. Republicans, at first hostile to empire, only became supportive when Germany started to build her own colonial empire. As it developed, the new empire took on roles of trade with France, supplying raw materials and purchasing manufactured items, as well as lending prestige to the motherland and spreading French civilization and language as well as Catholicism. It also provided crucial manpower in both World Wars. Question:  When did French Republicans back building the English empire?. Answer in as few words as possible.France took control of Algeria in 1830 but began in earnest to rebuild its worldwide empire after 1850, concentrating chiefly in North and West Africa, as well as South-East Asia, with other conquests in Central and East Africa, as well as the South Pacific. Republicans, at first hostile to empire, only became supportive when Germany started to build her own colonial empire. As it developed, the new empire took on roles of trade with France, supplying raw materials and purchasing manufactured items, as well as lending prestige to the motherland and spreading French civilization and language as well as Catholicism. It also provided crucial manpower in both World Wars. Question:  When did French Republicans back building the English empire?. Answer in as few words as possible.France took control of Algeria in 1830 but began in earnest to rebuild its worldwide empire after 1850, concentrating chiefly in North and West Africa, as well as South-East Asia, with other conquests in Central and East Africa, as well as the South Pacific. Republicans, at first hostile to empire, only became supportive when Germany started to build her own colonial empire. As it developed, the new empire took on roles of trade with France, supplying raw materials and purchasing manufactured items, as well as lending prestige to the motherland and spreading French civilization and language as well as Catholicism. It also provided crucial manpower in both World Wars. Question:  When did French Republicans back building the English empire?. Answer in as few words as possible.France took control of Algeria in 1830 but began in earnest to rebuild its worldwide empire after 1850, concentrating chiefly in North and West Africa, as well as South-East Asia, with other conquests in Central and East Africa, as well as the South Pacific. Republicans, at first hostile to empire, only became supportive when Germany started to build her own colonial empire. As it developed, the new empire took on roles of trade with France, supplying raw materials and purchasing manufactured items, as well as lending prestige to the motherland and spreading French civilization and language as well as Catholicism. It also provided crucial manpower in both World Wars. Question:  When did French Republicans back building the English empire?. Answer in as few words as possible.France took control of Algeria in 1830 but began in earnest to rebuild its worldwide empire after 1850, concentrating chiefly in North and West Africa, as well as South-East Asia, with other conquests in Central and East Africa, as well as the South Pacific. Republicans, at first hostile to empire, only became supportive when Germany started to build her own colonial empire. As it developed, the new empire took on roles of trade with France, supplying raw materials and purchasing manufactured items, as well as lending prestige to the motherland and spreading French civilization and language as well as Catholicism. It also provided crucial manpower in both World Wars. Question:  When did French Republicans back building the English empire?. Answer in as few words as possible."
 
     prompt = """Context: France took control of Algeria in 1830 but began in earnest to rebuild its worldwide empire after 1850, concentrating chiefly in North and West Africa, as well as South-East Asia, with other conquests in Central and East Africa, as well as the South Pacific. Republicans, at first hostile to empire, only became supportive when Germany started to build her own colonial empire. As it developed, the new empire took on roles of trade with France, supplying raw materials and purchasing manufactured items, as well as lending prestige to the motherland and spreading French civilization and language as well as Catholicism. It also provided crucial manpower in both World Wars.
         Question:  When did French Republicans back building the English empire?. Answer in as few words as possible
         """
-
-    # prompt = "Briefly answer this. My name is John, what is my name?"
 
     def clear_gpu_cache():
         torch.cuda.empty_cache()
         if torch.cuda.is_available():
             torch.cuda.synchronize()
 
+    # real base cache
     clear_gpu_cache()
     baseline_model = KV_hybrid_model(baseline_base=True)
     response, ttft, base_cache, prompt_len = baseline_model.call_with_prompt(
@@ -358,32 +356,18 @@ if __name__ == "__main__":
     )
     print("prompt_len", prompt_len)
     print("Baseline model", response, ttft)
-    del baseline_model
-
-    # BASELINE = False
-    # clear_gpu_cache()
-    # kv_model = KV_hybrid_model()
-    # kv_response, kv_ttft, kv_cache, _ = kv_model.call_with_prompt(
-    #     prompt, max_new_tokens=100, recalculate=False
-    # )
-    # print("KV model", kv_response, kv_ttft)
-    # plot_kv_differences(
-    #     kv_cache,
-    #     base_cache,
-    #     prompt_len,
-    #     save_path="kv_differences/kv_base.png",
-    # )
-    # del kv_model
+    del baseline_model  # free GPU
 
     clear_gpu_cache()
 
+    # call kv hybrid
     recalculate_args = {
-        "recalculate": False,
+        "recalculate": True,
         "interval_size": 40,
-        "num_intervals": 2,
+        "num_intervals": 3,
     }
 
-    kv_hybrid_model = KV_hybrid_model(baseline_aux=True)
+    kv_hybrid_model = KV_hybrid_model(baseline_base=False, baseline_aux=False)
     kv_hybrid_response, kv_hybrid_ttft, kv_hybrid_cache, prompt_len = (
         kv_hybrid_model.call_with_prompt(
             prompt, max_new_tokens=100, recalculate_args=recalculate_args

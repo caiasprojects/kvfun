@@ -31,6 +31,7 @@ head_dim_base = 128
 # load tensors
 repo_id = "caiacost/matrix-fun"
 filename = "Instruct-8b-1b1projections.3968.New.safetensors"
+print("filename:", filename)
 file_path = hf_hub_download(repo_id=repo_id, filename=filename)
 tensors = load_file(file_path)
 
@@ -77,26 +78,26 @@ def plot_kv_differences(
     seq_end = prompt_len
 
     for layer in range(n_layers_base):
-        # L1 error for keys - convert to float32 before numpy
+        # L1 error for keys
         key_diff = (
             torch.abs(
                 base_prompt_cache.key_cache[layer][:, :, seq_start:seq_end, :]
                 - base_prompt_cache_real.key_cache[layer][:, :, seq_start:seq_end, :]
             )
             .mean(dim=(0, 1, 3))
-            .float()  # Convert to float32
+            .float()
             .cpu()
             .numpy()
         )
 
-        # L1 error for values - convert to float32 before numpy
+        # L1 error for values
         value_diff = (
             torch.abs(
                 base_prompt_cache.value_cache[layer][:, :, seq_start:seq_end, :]
                 - base_prompt_cache_real.value_cache[layer][:, :, seq_start:seq_end, :]
             )
             .mean(dim=(0, 1, 3))
-            .float()  # Convert to float32
+            .float()
             .cpu()
             .numpy()
         )

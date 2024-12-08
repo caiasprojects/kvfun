@@ -1,10 +1,4 @@
-"""Official evaluation script for SQuAD version 2.0.
-
-In addition to basic functionality, we also compute additional statistics and
-plot precision-recall curves if an additional na_prob.json file is provided.
-This file is expected to map question ID's to the model's predicted probability
-that a question is unanswerable.
-"""
+# Evaluation file from SQuAD 2.0 with added support for multiple files
 
 import argparse
 import collections
@@ -14,6 +8,8 @@ import os
 import re
 import string
 import sys
+import glob
+from pathlib import Path
 
 OPTS = None
 
@@ -23,12 +19,14 @@ def parse_args():
         "Official evaluation script for SQuAD version 2.0."
     )
     parser.add_argument("data_file", metavar="data.json", help="Input data JSON file.")
-    parser.add_argument("pred_file", metavar="pred.json", help="Model predictions.")
     parser.add_argument(
-        "--out-file",
+        "pred_dir", metavar="pred_dir", help="Directory containing model predictions."
+    )
+    parser.add_argument(
+        "--out-dir",
         "-o",
-        metavar="eval.json",
-        help="Write accuracy metrics to file (default is stdout).",
+        metavar="eval_dir",
+        help="Directory to write accuracy metrics (default is stdout).",
     )
     parser.add_argument(
         "--na-prob-file",
@@ -314,45 +312,68 @@ def main():
     with open(OPTS.data_file) as f:
         dataset_json = json.load(f)
         dataset = dataset_json["data"]
-    with open(OPTS.pred_file) as f:
-        preds = json.load(f)
-    if OPTS.na_prob_file:
-        with open(OPTS.na_prob_file) as f:
-            na_probs = json.load(f)
-    else:
-        na_probs = {k: 0.0 for k in preds}
-    qid_to_has_ans = make_qid_to_has_ans(dataset)  # maps qid to True/False
-    has_ans_qids = [k for k, v in qid_to_has_ans.items() if v]
-    no_ans_qids = [k for k, v in qid_to_has_ans.items() if not v]
-    exact_raw, f1_raw = get_raw_scores(dataset, preds)
-    exact_thresh = apply_no_ans_threshold(
-        exact_raw, na_probs, qid_to_has_ans, OPTS.na_prob_thresh
-    )
-    f1_thresh = apply_no_ans_threshold(
-        f1_raw, na_probs, qid_to_has_ans, OPTS.na_prob_thresh
-    )
-    out_eval = make_eval_dict(exact_thresh, f1_thresh)
-    if has_ans_qids:
-        has_ans_eval = make_eval_dict(exact_thresh, f1_thresh, qid_list=has_ans_qids)
-        merge_eval(out_eval, has_ans_eval, "HasAns")
-    if no_ans_qids:
-        no_ans_eval = make_eval_dict(exact_thresh, f1_thresh, qid_list=no_ans_qids)
-        merge_eval(out_eval, no_ans_eval, "NoAns")
-    if OPTS.na_prob_file:
-        find_all_best_thresh(
-            out_eval, preds, exact_raw, f1_raw, na_probs, qid_to_has_ans
+
+    # Get all json files in prediction directory
+    pred_files = glob.glob(os.path.join(OPTS.pred_dir, "*.json"))
+
+    for pred_file in pred_files:
+        print(f"\nEvaluating {pred_file}...")
+        with open(pred_file) as f:
+            preds = json.load(f)
+
+        if OPTS.na_prob_file:
+            with open(OPTS.na_prob_file) as f:
+                na_probs = json.load(f)
+        else:
+            na_probs = {k: 0.0 for k in preds}
+
+        qid_to_has_ans = make_qid_to_has_ans(dataset)  # maps qid to True/False
+        has_ans_qids = [k for k, v in qid_to_has_ans.items() if v]
+        no_ans_qids = [k for k, v in qid_to_has_ans.items() if not v]
+        exact_raw, f1_raw = get_raw_scores(dataset, preds)
+        exact_thresh = apply_no_ans_threshold(
+            exact_raw, na_probs, qid_to_has_ans, OPTS.na_prob_thresh
         )
-    if OPTS.na_prob_file and OPTS.out_image_dir:
-        run_precision_recall_analysis(
-            out_eval, exact_raw, f1_raw, na_probs, qid_to_has_ans, OPTS.out_image_dir
+        f1_thresh = apply_no_ans_threshold(
+            f1_raw, na_probs, qid_to_has_ans, OPTS.na_prob_thresh
         )
-        histogram_na_prob(na_probs, has_ans_qids, OPTS.out_image_dir, "hasAns")
-        histogram_na_prob(na_probs, no_ans_qids, OPTS.out_image_dir, "noAns")
-    if OPTS.out_file:
-        with open(OPTS.out_file, "w") as f:
-            json.dump(out_eval, f)
-    else:
-        print(json.dumps(out_eval, indent=2))
+        out_eval = make_eval_dict(exact_thresh, f1_thresh)
+        if has_ans_qids:
+            has_ans_eval = make_eval_dict(
+                exact_thresh, f1_thresh, qid_list=has_ans_qids
+            )
+            merge_eval(out_eval, has_ans_eval, "HasAns")
+        if no_ans_qids:
+            no_ans_eval = make_eval_dict(exact_thresh, f1_thresh, qid_list=no_ans_qids)
+            merge_eval(out_eval, no_ans_eval, "NoAns")
+        if OPTS.na_prob_file:
+            find_all_best_thresh(
+                out_eval, preds, exact_raw, f1_raw, na_probs, qid_to_has_ans
+            )
+        if OPTS.na_prob_file and OPTS.out_image_dir:
+            run_precision_recall_analysis(
+                out_eval,
+                exact_raw,
+                f1_raw,
+                na_probs,
+                qid_to_has_ans,
+                OPTS.out_image_dir,
+            )
+            histogram_na_prob(na_probs, has_ans_qids, OPTS.out_image_dir, "hasAns")
+            histogram_na_prob(na_probs, no_ans_qids, OPTS.out_image_dir, "noAns")
+        if OPTS.out_dir:
+            # Create output directory if it doesn't exist
+            os.makedirs(OPTS.out_dir, exist_ok=True)
+
+            # Use same filename structure but in output directory
+            pred_name = Path(pred_file).stem
+            out_path = os.path.join(OPTS.out_dir, f"{pred_name}_eval.json")
+
+            with open(out_path, "w") as f:
+                json.dump(out_eval, f)
+        else:
+            print(f"\nResults for {pred_file}:")
+            print(json.dumps(out_eval, indent=2))
 
 
 if __name__ == "__main__":

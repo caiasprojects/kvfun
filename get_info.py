@@ -19,10 +19,16 @@ def main():
         return
 
     # Create the plot
-    plt.figure(figsize=(15, 6))
+    plt.figure(figsize=(6, 6))
+
+    # Define a color palette just for the trend lines
+    colors = ["red", "blue", "green", "purple", "orange"]
+    # If there are more files than colors, colors will cycle
+    colors = colors * (len(data_files) // len(colors) + 1)
+    colors = colors[: len(data_files)]
 
     # Process each file and add to plot
-    for data_file in data_files:
+    for data_file, color in zip(data_files, colors):
         # Load data
         with open(data_file) as f:
             data = json.load(f)
@@ -50,8 +56,8 @@ def main():
         # Get x range for smooth line
         x_range = np.linspace(min(prompt_lens), max(prompt_lens), 100)
 
-        # Plot the trend line
-        plt.plot(x_range, p(x_range), label=f"{filename} (trend)", alpha=1)
+        # Plot the trend line with the assigned color
+        plt.plot(x_range, p(x_range), label=f"{filename}", alpha=1, color=color)
 
         # Add scatter plot with smoothed dotted line for actual data
         # Sort the points by prompt length
@@ -60,23 +66,18 @@ def main():
         sorted_ttfts = np.array(ttfts)[sorted_indices]
 
         # Apply smoothing using rolling average
-        window_size = 2  # Adjust this value to control smoothness
+        window_size = 2  # smoothness
         weights = np.ones(window_size) / window_size
         smoothed_ttfts = np.convolve(sorted_ttfts, weights, mode="valid")
         smoothed_lens = sorted_lens[window_size - 1 :]
 
-        plt.plot(
-            smoothed_lens,
-            smoothed_ttfts,
-            linestyle=":",
-            alpha=0.3,
-        )
+        plt.plot(smoothed_lens, smoothed_ttfts, linestyle=":", alpha=0.2, color=color)
 
-    plt.xlabel("Prompt Length (characters)")
+    plt.xlabel("Prompt Length (tokens)")
     plt.ylabel("Time to First Token (seconds)")
-    plt.title("Prompt Length vs Time to First Token - Trend Lines")
+    plt.title("Prompt Length vs Time to First Token")
     plt.grid(True, alpha=0.3)
-    plt.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
+    plt.legend()
 
     # Save plot
     output_path = os.path.join(args.output_dir, "ttft_comparison.png")
